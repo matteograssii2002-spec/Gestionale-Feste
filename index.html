@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   :root{
     --bg:#16110f;
@@ -186,13 +187,15 @@
   .add-row input{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:11px 13px;color:var(--text);font-family:'Outfit';font-size:.92rem}
 
   /* Shopping */
-  .shop-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+  .shop-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
   .shop-col{background:var(--surface);border:1px solid var(--line-soft);border-radius:15px;padding:16px}
   .shop-col h3{font-family:'Fraunces',serif;font-weight:600;font-size:1.12rem;display:flex;align-items:center;gap:9px;margin-bottom:4px}
   .shop-col .tot{font-size:.78rem;color:var(--muted);margin-bottom:12px}
   .shop-col .badge{font-size:1.2rem}
-  .sitem{display:grid;grid-template-columns:1fr 52px 70px auto;gap:7px;align-items:center;margin-bottom:7px;animation:rise .3s ease both}
-  .sitem input{background:var(--bg-2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-family:'Outfit';font-size:.85rem}
+  .sitem{display:grid;grid-template-columns:46px minmax(0,1fr) auto 28px;gap:6px;align-items:center;margin-bottom:8px;animation:rise .3s ease both}
+  .sitem .sname{grid-column:1 / -1}
+  .sitem input,.sitem select{background:var(--bg-2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-family:'Outfit';font-size:.85rem}
+  .sitem select{padding:8px 4px;font-size:.78rem;cursor:pointer}
   .sitem input.q{text-align:center;padding:8px 4px}
   .sitem input.p{text-align:right}
   .sitem .icon-btn{width:28px;height:28px;font-size:.9rem}
@@ -206,7 +209,7 @@
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   @media(max-width:640px){
     .grow{grid-template-columns:1fr;gap:10px}
-    .sitem{grid-template-columns:1fr 44px 60px auto}
+    .sitem{grid-template-columns:44px minmax(0,1fr) auto 26px}
   }
   @media print{
     body{background:#fff;color:#000;padding:0}
@@ -342,6 +345,12 @@
         <div class="items" id="items-alcool"></div>
         <button class="sadd" data-cat="alcool">＋ Aggiungi prodotto</button>
       </div>
+      <div class="shop-col" data-cat="altro">
+        <h3><span class="badge">🎉</span> Altro</h3>
+        <div class="tot" id="tot-altro">€ 0,00</div>
+        <div class="items" id="items-altro"></div>
+        <button class="sadd" data-cat="altro">＋ Aggiungi prodotto</button>
+      </div>
     </div>
   </section>
 
@@ -353,18 +362,6 @@
     <input type="file" id="importFile" accept="application/json" hidden>
   </footer>
 
-  <div class="overlay" id="keyOverlay">
-    <div class="modal">
-      <h3>🔑 Chiave API Anthropic</h3>
-      <p>Per leggere lo scontrino serve una chiave API Anthropic. Resta salvata solo in questo browser e non viene inclusa nei backup.</p>
-      <input type="password" id="keyInput" placeholder="sk-ant-..." autocomplete="off">
-      <div class="row">
-        <button class="btn-ghost" data-close="keyOverlay">Annulla</button>
-        <button class="btn" id="keySave">Salva e continua</button>
-      </div>
-      <p class="small">La trovi su console.anthropic.com → API Keys. Ogni scansione costa pochi centesimi.</p>
-    </div>
-  </div>
   <div class="overlay" id="scanOverlay">
     <div class="modal" style="text-align:center">
       <div class="spinner" id="scanSpin"></div>
@@ -389,6 +386,13 @@ function parseNum(s){
 }
 const uid=()=>Math.random().toString(36).slice(2,9);
 const METHODS=['Bonifico','PayPal','Contanti','Satispay','Altro'];
+const CATS=[
+  {id:'cibo',short:'🍕 Cibo'},
+  {id:'analcolici',short:'🥤 Analc.'},
+  {id:'alcool',short:'🍸 Alcool'},
+  {id:'altro',short:'🎉 Altro'}
+];
+const CATIDS=CATS.map(c=>c.id);
 
 let state={
   partyName:'', partyDate:'',
@@ -424,7 +428,7 @@ function gPrice(g){
 function shopTotal(cat){
   return state.shopping.filter(s=>s.cat===cat).reduce((a,s)=>a+(parseNum(s.qty)||1)*parseNum(s.price),0);
 }
-function shopGrand(){return shopTotal('cibo')+shopTotal('analcolici')+shopTotal('alcool');}
+function shopGrand(){return CATIDS.reduce((a,c)=>a+shopTotal(c),0);}
 function effectiveCost(){return state.autoCost?shopGrand():state.totalCost;}
 
 /* ---------- RENDER ---------- */
@@ -497,14 +501,17 @@ function renderGuests(){
 }
 
 function renderShopping(){
-  ['cibo','analcolici','alcool'].forEach(cat=>{
+  CATIDS.forEach(cat=>{
     const box=document.getElementById('items-'+cat);
     const items=state.shopping.filter(s=>s.cat===cat);
     box.innerHTML=items.map(s=>`
       <div class="sitem" data-id="${s.id}">
-        <input value="${esc(s.name||'')}" placeholder="Prodotto" data-act="sname">
+        <input class="sname" value="${esc(s.name||'')}" placeholder="Prodotto" data-act="sname">
         <input class="q" inputmode="numeric" value="${esc(s.qty||1)}" data-act="sqty" title="Quantità">
         <input class="p" inputmode="decimal" value="${s.price?itNum(s.price):''}" placeholder="€" data-act="sprice" title="Prezzo unitario">
+        <select data-act="scat" title="Categoria">
+          ${CATS.map(c=>`<option value="${c.id}" ${s.cat===c.id?'selected':''}>${c.short}</option>`).join('')}
+        </select>
         <button class="icon-btn danger" data-act="sdel">✕</button>
       </div>`).join('');
     document.getElementById('tot-'+cat).textContent=eur(shopTotal(cat))+(items.length?` · ${items.length} prod.`:'');
@@ -591,6 +598,7 @@ document.getElementById('shopping').addEventListener('input',e=>{
   const it=e.target.closest('.sitem');if(!it)return;
   const s=state.shopping.find(x=>x.id===it.dataset.id);if(!s)return;
   const act=e.target.dataset.act;
+  if(act==='scat'){s.cat=e.target.value;save();renderShopping();renderDash();syncAutoCost();return;}
   if(act==='sname')s.name=e.target.value;
   else if(act==='sqty')s.qty=parseNum(e.target.value)||1;
   else if(act==='sprice')s.price=parseNum(e.target.value);
@@ -639,25 +647,13 @@ function initFields(){
   document.getElementById('guestSearch').value=state.search||'';
   [...document.getElementById('guestFilter').children].forEach(c=>c.classList.toggle('on',c.dataset.f===state.filter));
 }
-/* ---------- RECEIPT SCANNER ---------- */
-const KEYSTORE='festaManager.apiKey';
-const getKey=()=>localStorage.getItem(KEYSTORE)||'';
+/* ---------- RECEIPT SCANNER (OCR locale, senza chiave) ---------- */
 function showOv(id){document.getElementById(id).classList.add('show');}
 function hideOv(id){document.getElementById(id).classList.remove('show');}
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>hideOv(b.dataset.close)));
 
 const scanFileEl=document.getElementById('scanFile');
-document.getElementById('scanBtn').addEventListener('click',()=>{
-  if(!getKey()){showOv('keyOverlay');document.getElementById('keyInput').focus();}
-  else scanFileEl.click();
-});
-document.getElementById('keySave').addEventListener('click',()=>{
-  const k=document.getElementById('keyInput').value.trim();
-  if(!k.startsWith('sk-')){alert('La chiave dovrebbe iniziare con "sk-ant-".');return;}
-  localStorage.setItem(KEYSTORE,k);
-  document.getElementById('keyInput').value='';
-  hideOv('keyOverlay');scanFileEl.click();
-});
+document.getElementById('scanBtn').addEventListener('click',()=>scanFileEl.click());
 
 function setScan(title,msg,done){
   document.getElementById('scanTitle').textContent=title;
@@ -669,64 +665,96 @@ function downscale(file){
   return new Promise((res,rej)=>{
     const img=new Image();const url=URL.createObjectURL(file);
     img.onload=()=>{
-      let w=img.naturalWidth,h=img.naturalHeight,max=1600;
+      let w=img.naturalWidth,h=img.naturalHeight,max=2000;
       if(Math.max(w,h)>max){const r=max/Math.max(w,h);w=Math.round(w*r);h=Math.round(h*r);}
       const c=document.createElement('canvas');c.width=w;c.height=h;
       c.getContext('2d').drawImage(img,0,0,w,h);
       URL.revokeObjectURL(url);
-      res({base64:c.toDataURL('image/jpeg',0.85).split(',')[1],mime:'image/jpeg'});
+      res(c.toDataURL('image/jpeg',0.92));
     };
-    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Immagine non leggibile (formato HEIC?). Prova a salvarla come JPG.'));};
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Immagine non leggibile (formato HEIC?). Salvala come JPG e riprova.'));};
     img.src=url;
   });
 }
-async function analyzeReceipt(base64,mime){
-  const prompt=`Questa immagine è lo scontrino di una spesa fatta per una festa. Estrai SOLO le righe che corrispondono a prodotti acquistati: ignora intestazione del negozio, indirizzo, data, numero scontrino, totali, subtotali, IVA, resto, contante, carta e sconti generici.\n\nPer ogni prodotto restituisci un oggetto con:\n- "name": nome leggibile del prodotto (correggi abbreviazioni evidenti)\n- "qty": quantità (numero, default 1)\n- "price": prezzo UNITARIO in euro come numero con punto decimale. Se sullo scontrino c'è solo il totale di riga e la quantità è maggiore di 1, dividi il totale per la quantità.\n- "category": esattamente uno tra "cibo", "analcolici", "alcool". Usa "alcool" per birra, vino, spumante, liquori e superalcolici; "analcolici" per acqua, succhi, bibite, soft drink, energy drink, caffè; "cibo" per tutto ciò che si mangia.\n\nRispondi ESCLUSIVAMENTE con un array JSON valido, senza testo né markdown. Esempio: [{"name":"Coca Cola 1.5L","qty":2,"price":1.49,"category":"analcolici"}]`;
-  const r=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key':getKey(),
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
-    body:JSON.stringify({
-      model:'claude-sonnet-4-6',
-      max_tokens:1800,
-      messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:mime,data:base64}},
-        {type:'text',text:prompt}
-      ]}]
-    })
+const SCAN_SKIP=/totale|subtot|\btot\b|iva|resto|contant|carta|bancomat|importo|pagam|cassa|scontrino|grazie|arrivederc|cliente|p\.?\s?iva|cod|sconto|punti|saldo|fidelity|documento|riepilog|reparto|operatore|terminale|transa|\beuro\b|\bora\b|\bdata\b|\bn\b/i;
+const SCAN_KW={
+  alcool:['birr','beer','vino','vini','prosecc','spumant','vodka',' gin','rum ','whisk','tequila','liquor','amaro','aperol','campari','spritz','grappa','limoncell','bacardi','jager','vermouth','moscato','lambrusc','chardonnay',' ipa','lager','peroni','heineken','ichnusa','moretti','corona','tennent','ceres'],
+  analcolici:['acqua','coca','cola','fanta','sprite','schwepp','succo','succhi','aranciat','gassos','tonic','red bull','redbull','energy','estathe','the ','bibit','chinotto','lemonsoda','gatorade','powerade','nestea','levissima','san benedetto','crodino'],
+  altro:['bicchier','piatti','piatto','tovagl','posate','forchett','cucchia','coltell','carbonell','carbone','ghiacc','candel','sacchi','sacco','spazzat','cannucc','stuzzic','accendin','fiammif','stoviglie','alluminio','pellicola','vassoi','vassoio','noleggio',' dj','decora','pallonc','luci','stagnola']
+};
+function classifyItem(name){
+  const n=' '+name.toLowerCase()+' ';
+  if(SCAN_KW.alcool.some(k=>n.includes(k)))return 'alcool';
+  if(SCAN_KW.analcolici.some(k=>n.includes(k)))return 'analcolici';
+  if(SCAN_KW.altro.some(k=>n.includes(k)))return 'altro';
+  return 'cibo';
+}
+function tidyName(s){
+  return s.split(' ').filter(Boolean).map(w=>w.length>1?w.charAt(0).toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ');
+}
+function parseReceipt(text){
+  const priceRe=/(\d{1,4}[.,]\d{2})/g;
+  const raw=[];
+  text.split(/\r?\n/).forEach(line=>{
+    const t=line.trim();
+    if(t.length<3||SCAN_SKIP.test(t))return;
+    const prices=t.match(priceRe);
+    if(!prices)return;
+    const lineTotal=parseNum(prices[prices.length-1]);
+    if(!lineTotal||lineTotal<=0||lineTotal>3000)return;
+    let qty=1,unit=lineTotal;
+    const qm=t.match(/(\d{1,3})\s*[xX\u00d7*]\s*\d/);
+    if(qm)qty=parseInt(qm[1],10)||1;
+    if(qty>1&&prices.length>=2)unit=parseNum(prices[0]);
+    else if(qty>1)unit=lineTotal/qty;
+    if(qty>200){qty=1;unit=lineTotal;}
+    let name=t.replace(priceRe,' ')
+      .replace(/\b\d{1,3}\s*[xX\u00d7*]\s*/g,' ')
+      .replace(/\u20ac/g,' ')
+      .replace(/\b(kg|gr|g|lt|l|ml|cl|pz|conf|cad|um)\b/gi,' ')
+      .replace(/[^A-Za-z\u00c0-\u00ff0-9'.\- ]/g,' ')
+      .replace(/\s{2,}/g,' ').trim()
+      .replace(/^[\d.\-\s]+/,'').replace(/[\s.\-]+$/,'').trim();
+    if(name.length<2)return;
+    raw.push({name:name,qty:qty,unit:unit});
   });
-  if(!r.ok){
-    let detail='';try{const j=await r.json();detail=j.error&&j.error.message?(' — '+j.error.message):'';}catch(e){}
-    throw new Error('Errore API '+r.status+(r.status===401?' — chiave non valida':detail));
-  }
-  const data=await r.json();
-  const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
-  const clean=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
-  const m=clean.match(/\[[\s\S]*\]/);
-  return JSON.parse(m?m[0]:clean);
+  const groups={};
+  raw.forEach(r=>{
+    const key=r.name.toLowerCase().replace(/\s+/g,' ').slice(0,38);
+    if(!groups[key])groups[key]={name:tidyName(r.name),qty:0,unitSum:0,lines:0};
+    groups[key].qty+=r.qty;groups[key].unitSum+=r.unit;groups[key].lines++;
+  });
+  return Object.values(groups).map(g=>({
+    name:g.name,
+    qty:g.qty,
+    price:Math.round((g.unitSum/g.lines)*100)/100,
+    category:classifyItem(g.name)
+  }));
+}
+async function runOCR(image){
+  if(!window.Tesseract)throw new Error('Motore OCR non caricato (controlla la connessione e ricarica la pagina).');
+  const out=await window.Tesseract.recognize(image,'ita',{logger:m=>{
+    if(m.status==='recognizing text')setScan('Leggo lo scontrino…','Lettura testo… '+Math.round((m.progress||0)*100)+'%',false);
+    else if(m.status&&/load|download|initial/i.test(m.status))setScan('Preparo OCR…','Scarico il modello di lingua (solo la prima volta)…',false);
+  }});
+  return (out&&out.data&&out.data.text)||'';
 }
 scanFileEl.addEventListener('change',async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
-  showOv('scanOverlay');setScan('Leggo lo scontrino…','Preparo l\'immagine.',false);
+  showOv('scanOverlay');setScan('Preparo immagine…','Un attimo…',false);
   try{
     const img=await downscale(f);
-    setScan('Leggo lo scontrino…','Claude sta estraendo prodotti e prezzi…',false);
-    const items=await analyzeReceipt(img.base64,img.mime);
-    if(!Array.isArray(items)||!items.length){
-      setScan('Nessun prodotto trovato 🤔','Prova con una foto più nitida e ben illuminata.',true);return;
-    }
-    const counts={cibo:0,analcolici:0,alcool:0};
+    const text=await runOCR(img);
+    const items=parseReceipt(text);
+    if(!items.length){setScan('Niente da aggiungere','Non sono riuscito a leggere prodotti e prezzi. Prova una foto più dritta, nitida e ben illuminata, oppure aggiungi i prodotti a mano.',true);return;}
+    const counts={cibo:0,analcolici:0,alcool:0,altro:0};
     items.forEach(it=>{
-      const cat=['cibo','analcolici','alcool'].includes(it.category)?it.category:'cibo';
-      state.shopping.push({id:uid(),cat,name:String(it.name||'').slice(0,60),qty:Number(it.qty)||1,price:Number(it.price)||0});
+      const cat=CATIDS.includes(it.category)?it.category:'cibo';
+      state.shopping.push({id:uid(),cat:cat,name:String(it.name).slice(0,60),qty:it.qty||1,price:it.price||0});
       counts[cat]++;
     });
     save();renderShopping();renderDash();syncAutoCost();
-    setScan('Fatto! ✓',`Aggiunti ${items.length} prodotti — 🍕 ${counts.cibo} · 🥤 ${counts.analcolici} · 🍸 ${counts.alcool}. Controlla e correggi se serve.`,true);
+    setScan('Fatto!','Aggiunti '+items.length+' prodotti — 🍕 '+counts.cibo+' · 🥤 '+counts.analcolici+' · 🍸 '+counts.alcool+' · 🎉 '+counts.altro+'. OCR approssimativo: controlla nomi, prezzi, quantità e categorie.',true);
   }catch(err){
     setScan('Ops, qualcosa non va',(err&&err.message)?err.message:String(err),true);
   }
