@@ -368,6 +368,7 @@
       <h3 id="scanTitle">Leggo lo scontrino…</h3>
       <p id="scanMsg" style="margin-bottom:0">Preparo l'immagine.</p>
       <div class="row" id="scanActions" style="justify-content:center;display:none;margin-top:18px">
+        <button class="btn-ghost" id="ocrTextBtn" type="button">Testo letto</button>
         <button class="btn" data-close="scanOverlay">Ok</button>
       </div>
     </div>
@@ -661,26 +662,41 @@ function setScan(title,msg,done){
   document.getElementById('scanSpin').style.display=done?'none':'block';
   document.getElementById('scanActions').style.display=done?'flex':'none';
 }
-function downscale(file){
+let lastOcrText='';
+function prepImage(file){
   return new Promise((res,rej)=>{
     const img=new Image();const url=URL.createObjectURL(file);
     img.onload=()=>{
-      let w=img.naturalWidth,h=img.naturalHeight,max=2000;
-      if(Math.max(w,h)>max){const r=max/Math.max(w,h);w=Math.round(w*r);h=Math.round(h*r);}
+      let w=img.naturalWidth,h=img.naturalHeight;
+      const longest=Math.max(w,h);
+      let scale=1;
+      if(longest>2400)scale=2400/longest;
+      else if(longest<1400)scale=Math.min(2,1800/longest);
+      w=Math.round(w*scale);h=Math.round(h*scale);
       const c=document.createElement('canvas');c.width=w;c.height=h;
-      c.getContext('2d').drawImage(img,0,0,w,h);
+      const ctx=c.getContext('2d');ctx.drawImage(img,0,0,w,h);
       URL.revokeObjectURL(url);
-      res(c.toDataURL('image/jpeg',0.92));
+      try{
+        const id=ctx.getImageData(0,0,w,h),d=id.data,k=1.5;
+        for(let i=0;i<d.length;i+=4){
+          let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+          g=(g-128)*k+128+8;
+          g=g<0?0:g>255?255:g;
+          d[i]=d[i+1]=d[i+2]=g;
+        }
+        ctx.putImageData(id,0,0);
+      }catch(e){}
+      res(c.toDataURL('image/png'));
     };
     img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Immagine non leggibile (formato HEIC?). Salvala come JPG e riprova.'));};
     img.src=url;
   });
 }
-const SCAN_SKIP=/totale|subtot|\btot\b|iva|resto|contant|carta|bancomat|importo|pagam|cassa|scontrino|grazie|arrivederc|cliente|p\.?\s?iva|cod|sconto|punti|saldo|fidelity|documento|riepilog|reparto|operatore|terminale|transa|\beuro\b|\bora\b|\bdata\b|\bn\b/i;
+const SCAN_SKIP=/totale|subtot|\btot\b|\biva\b|resto|contant|carta|bancomat|importo|pagam|cassa|scontrino|grazie|arrivederc|cliente|partita iva|\bcod\b|sconto|\bpunti\b|saldo|fidelity|documento|riepilog|reparto|operatore|terminale|transa|\beuro\b|\bora\b|\bdata\b/i;
 const SCAN_KW={
-  alcool:['birr','beer','vino','vini','prosecc','spumant','vodka',' gin','rum ','whisk','tequila','liquor','amaro','aperol','campari','spritz','grappa','limoncell','bacardi','jager','vermouth','moscato','lambrusc','chardonnay',' ipa','lager','peroni','heineken','ichnusa','moretti','corona','tennent','ceres'],
-  analcolici:['acqua','coca','cola','fanta','sprite','schwepp','succo','succhi','aranciat','gassos','tonic','red bull','redbull','energy','estathe','the ','bibit','chinotto','lemonsoda','gatorade','powerade','nestea','levissima','san benedetto','crodino'],
-  altro:['bicchier','piatti','piatto','tovagl','posate','forchett','cucchia','coltell','carbonell','carbone','ghiacc','candel','sacchi','sacco','spazzat','cannucc','stuzzic','accendin','fiammif','stoviglie','alluminio','pellicola','vassoi','vassoio','noleggio',' dj','decora','pallonc','luci','stagnola']
+  alcool:['birr','beer','vino','vini','prosecc','spumant','vodka',' gin','rum ','whisk','tequila','liquor','amaro','aperol','campari','spritz','grappa','limoncell','bacardi','jager','vermouth','moscato','lambrusc','chardonnay',' ipa','lager','peroni','heineken','ichnusa','moretti','corona','tennent','ceres','negroni','bacard'],
+  analcolici:['acqua','coca','cola','fanta','sprite','schwepp','succo','succhi','aranciat','gassos','tonic','red bull','redbull','energy','estathe','the ','bibit','chinotto','lemonsoda','gatorade','powerade','nestea','levissima','san benedetto','crodino','spuma'],
+  altro:['bicchier','piatti','piatto','tovagl','posate','forchett','cucchia','coltell','carbonell','carbone','ghiacc','candel','sacchi','sacco','spazzat','cannucc','stuzzic','accendin','fiammif','stoviglie','alluminio','pellicola','vassoi','vassoio','noleggio',' dj','decora','pallonc','luci','stagnola','tovaglioli']
 };
 function classifyItem(name){
   const n=' '+name.toLowerCase()+' ';
@@ -692,34 +708,55 @@ function classifyItem(name){
 function tidyName(s){
   return s.split(' ').filter(Boolean).map(w=>w.length>1?w.charAt(0).toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ');
 }
+function cleanName(t){
+  return t.replace(/(\d{1,4}[.,]\d{2})/g,' ')
+    .replace(/\b\d{1,3}\s*[xX\u00d7*]\s*/g,' ')
+    .replace(/\u20ac/g,' ')
+    .replace(/\b(kg|gr|g|lt|l|ml|cl|pz|conf|cad|um)\b/gi,' ')
+    .replace(/[^A-Za-z\u00c0-\u00ff0-9'.\- ]/g,' ')
+    .replace(/\s{2,}/g,' ').trim()
+    .replace(/^[\d.\-\s]+/,'').replace(/[\s.\-]+$/,'').replace(/\s+[A-Za-z]$/,'').trim();
+}
+function alphaCount(s){return (s.match(/[A-Za-z\u00c0-\u00ff]/g)||[]).length;}
+function makeItem(name,line,prices){
+  let qty=1,total=parseNum(prices[prices.length-1]),unit=total;
+  const qm=line.match(/(\d{1,3})\s*[xX\u00d7*]\s*\d/)||line.match(/\b(\d{1,3})\s*(?:pz|pezzi|conf)\b/i);
+  if(qm)qty=parseInt(qm[1],10)||1;
+  if(qty>1&&prices.length>=2)unit=parseNum(prices[0]);
+  else if(qty>1)unit=total/qty;
+  if(qty>200){qty=1;unit=total;}
+  return {name:name,qty:qty,unit:unit};
+}
 function parseReceipt(text){
   const priceRe=/(\d{1,4}[.,]\d{2})/g;
-  const raw=[];
-  text.split(/\r?\n/).forEach(line=>{
-    const t=line.trim();
-    if(t.length<3||SCAN_SKIP.test(t))return;
+  const rows=[];
+  let pending=null;
+  text.split(/\r?\n/).forEach(raw=>{
+    const t=raw.replace(/\s+/g,' ').trim();
+    if(t.length<2)return;
     const prices=t.match(priceRe);
-    if(!prices)return;
-    const lineTotal=parseNum(prices[prices.length-1]);
-    if(!lineTotal||lineTotal<=0||lineTotal>3000)return;
-    let qty=1,unit=lineTotal;
-    const qm=t.match(/(\d{1,3})\s*[xX\u00d7*]\s*\d/);
-    if(qm)qty=parseInt(qm[1],10)||1;
-    if(qty>1&&prices.length>=2)unit=parseNum(prices[0]);
-    else if(qty>1)unit=lineTotal/qty;
-    if(qty>200){qty=1;unit=lineTotal;}
-    let name=t.replace(priceRe,' ')
-      .replace(/\b\d{1,3}\s*[xX\u00d7*]\s*/g,' ')
-      .replace(/\u20ac/g,' ')
-      .replace(/\b(kg|gr|g|lt|l|ml|cl|pz|conf|cad|um)\b/gi,' ')
-      .replace(/[^A-Za-z\u00c0-\u00ff0-9'.\- ]/g,' ')
-      .replace(/\s{2,}/g,' ').trim()
-      .replace(/^[\d.\-\s]+/,'').replace(/[\s.\-]+$/,'').trim();
-    if(name.length<2)return;
-    raw.push({name:name,qty:qty,unit:unit});
+    const skip=SCAN_SKIP.test(t);
+    if(!prices){
+      if(alphaCount(t)>=3&&!skip&&!/^\d/.test(t))pending=cleanName(t);else pending=null;
+      return;
+    }
+    const total=parseNum(prices[prices.length-1]);
+    if(!total||total<=0||total>3000){
+      if(alphaCount(t)>=3&&!skip&&!/^\d/.test(t))pending=cleanName(t);else pending=null;
+      return;
+    }
+    const nm=cleanName(t);
+    if(alphaCount(nm)<2){
+      if(pending){rows.push(makeItem(pending,t,prices));pending=null;}
+      return;
+    }
+    if(skip){pending=null;return;}
+    rows.push(makeItem(nm,t,prices));
+    pending=null;
   });
   const groups={};
-  raw.forEach(r=>{
+  rows.forEach(r=>{
+    if(!r.name||alphaCount(r.name)<2)return;
     const key=r.name.toLowerCase().replace(/\s+/g,' ').slice(0,38);
     if(!groups[key])groups[key]={name:tidyName(r.name),qty:0,unitSum:0,lines:0};
     groups[key].qty+=r.qty;groups[key].unitSum+=r.unit;groups[key].lines++;
@@ -733,20 +770,28 @@ function parseReceipt(text){
 }
 async function runOCR(image){
   if(!window.Tesseract)throw new Error('Motore OCR non caricato (controlla la connessione e ricarica la pagina).');
-  const out=await window.Tesseract.recognize(image,'ita',{logger:m=>{
+  setScan('Preparo OCR…','Inizializzo il motore…',false);
+  const worker=await window.Tesseract.createWorker('ita',1,{logger:m=>{
     if(m.status==='recognizing text')setScan('Leggo lo scontrino…','Lettura testo… '+Math.round((m.progress||0)*100)+'%',false);
-    else if(m.status&&/load|download|initial/i.test(m.status))setScan('Preparo OCR…','Scarico il modello di lingua (solo la prima volta)…',false);
+    else if(m.status&&/load|download|init/i.test(m.status))setScan('Preparo OCR…','Scarico il motore (solo la prima volta)…',false);
   }});
-  return (out&&out.data&&out.data.text)||'';
+  try{
+    await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1'});
+    const out=await worker.recognize(image);
+    return (out&&out.data&&out.data.text)||'';
+  }finally{
+    try{await worker.terminate();}catch(e){}
+  }
 }
 scanFileEl.addEventListener('change',async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
   showOv('scanOverlay');setScan('Preparo immagine…','Un attimo…',false);
   try{
-    const img=await downscale(f);
+    const img=await prepImage(f);
     const text=await runOCR(img);
+    lastOcrText=text;
     const items=parseReceipt(text);
-    if(!items.length){setScan('Niente da aggiungere','Non sono riuscito a leggere prodotti e prezzi. Prova una foto più dritta, nitida e ben illuminata, oppure aggiungi i prodotti a mano.',true);return;}
+    if(!items.length){setScan('Niente da aggiungere','Non sono riuscito a leggere prodotti e prezzi. Premi "Testo letto" per vedere cosa ha riconosciuto, oppure prova una foto più dritta, nitida e ben illuminata.',true);return;}
     const counts={cibo:0,analcolici:0,alcool:0,altro:0};
     items.forEach(it=>{
       const cat=CATIDS.includes(it.category)?it.category:'cibo';
@@ -759,6 +804,8 @@ scanFileEl.addEventListener('change',async e=>{
     setScan('Ops, qualcosa non va',(err&&err.message)?err.message:String(err),true);
   }
 });
+const ocrTextBtn=document.getElementById('ocrTextBtn');
+if(ocrTextBtn)ocrTextBtn.addEventListener('click',()=>{if(lastOcrText)prompt('Testo riconosciuto dallo scontrino (per controllo):',lastOcrText);else alert('Nessun testo ancora.');});
 
 /* ---------- SYNC LOGIC ---------- */
 function setSyncStatus(kind,msg){
